@@ -1,0 +1,8 @@
+__pychace__/
+*.pyc
+.vscode/
+gram2vec/
+*.pt
+*.zip
+*.pkl
+*.pth

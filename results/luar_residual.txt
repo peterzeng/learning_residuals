@@ -1,0 +1,68 @@
+Gram2Vec: Using 'en_core_web_lg'
+cuda
+threshold: 0.2, gram2vec correct: 5220/12757, residual correct: 6546/12757
+gram2vec accuracy: 0.4092, residual accuracy: 0.5131
+Gram2Vec Stats:
+Different Author Precision: 0.7028, Same Author Precision: 0.4025
+Different Author Recall: 0.0263, Same Author Recall: 0.9833
+Different Author F1: 0.0506, Same Author F1: 0.5712
+Residual Stats:
+Different Author Precision: 0.8140, Same Author Precision: 0.4471
+Different Author Recall: 0.2442, Same Author Recall: 0.9163
+Different Author F1: 0.3757, Same Author F1: 0.6010
+
+threshold: 0.3, gram2vec correct: 5622/12757, residual correct: 7390/12757
+gram2vec accuracy: 0.4407, residual accuracy: 0.5793
+Gram2Vec Stats:
+Different Author Precision: 0.6888, Same Author Precision: 0.4108
+Different Author Recall: 0.1235, Same Author Recall: 0.9163
+Different Author F1: 0.2094, Same Author F1: 0.5673
+Residual Stats:
+Different Author Precision: 0.7804, Same Author Precision: 0.4849
+Different Author Recall: 0.4157, Same Author Recall: 0.8246
+Different Author F1: 0.5424, Same Author F1: 0.6107
+
+threshold: 0.5, gram2vec correct: 6745/12757, residual correct: 8485/12757
+gram2vec accuracy: 0.5287, residual accuracy: 0.6651
+Gram2Vec Stats:
+Different Author Precision: 0.6477, Same Author Precision: 0.4370
+Different Author Recall: 0.4701, Same Author Recall: 0.6166
+Different Author F1: 0.5448, Same Author F1: 0.5115
+Residual Stats:
+Different Author Precision: 0.7009, Same Author Precision: 0.5958
+Different Author Recall: 0.7705, Same Author Recall: 0.5071
+Different Author F1: 0.7341, Same Author F1: 0.5478
+
+threshold: 0.7, gram2vec correct: 7637/12757, residual correct: 8230/12757
+gram2vec accuracy: 0.5987, residual accuracy: 0.6451
+Gram2Vec Stats:
+Different Author Precision: 0.6230, Same Author Precision: 0.4968
+Different Author Recall: 0.8380, Same Author Recall: 0.2398
+Different Author F1: 0.7147, Same Author F1: 0.3235
+Residual Stats:
+Different Author Precision: 0.6363, Same Author Precision: 0.7242
+Different Author Recall: 0.9536, Same Author Recall: 0.1826
+Different Author F1: 0.7633, Same Author F1: 0.2917
+
+threshold: 0.9, gram2vec correct: 7701/12757, residual correct: 7785/12757
+gram2vec accuracy: 0.6037, residual accuracy: 0.6103
+Gram2Vec Stats:
+Different Author Precision: 0.6033, Same Author Precision: 0.6277
+Different Author Recall: 0.9909, Same Author Recall: 0.0231
+Different Author F1: 0.7500, Same Author F1: 0.0446
+Residual Stats:
+Different Author Precision: 0.6068, Same Author Precision: 0.8300
+Different Author Recall: 0.9956, Same Author Recall: 0.0325
+Different Author F1: 0.7540, Same Author F1: 0.0626
+
+threshold: 0.95, gram2vec correct: 7681/12757, residual correct: 7743/12757
+gram2vec accuracy: 0.6021, residual accuracy: 0.6070
+Gram2Vec Stats:
+Different Author Precision: 0.6012, Same Author Precision: 0.9667
+Different Author Recall: 0.9999, Same Author Recall: 0.0057
+Different Author F1: 0.7509, Same Author F1: 0.0113
+Residual Stats:
+Different Author Precision: 0.6044, Same Author Precision: 0.8689
+Different Author Recall: 0.9979, Same Author Recall: 0.0208
+Different Author F1: 0.7529, Same Author F1: 0.0406
+

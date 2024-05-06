@@ -1,0 +1,8 @@
+Class 0: Precision: 0.6659, Recall: 0.7294, F1: 0.6962
+Class 1: Precision: 0.7009, Recall: 0.6340, F1: 0.6658
+Total Precision: 0.6834
+Total Recall: 0.6817
+Total F1 Score: 0.6810
+Total Accuracy: 0.6817
+Class 0 Accuracy: 0.7294
+Class 1 Accuracy: 0.6340
