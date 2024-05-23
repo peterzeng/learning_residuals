@@ -400,5 +400,3 @@ if __name__ == "__main__":
     plt.grid(axis='y', alpha=0.75)
     plt.show()
     plt.savefig(f"predicted_labels_{args.model_type}_{args.run_id}.png")
-
-

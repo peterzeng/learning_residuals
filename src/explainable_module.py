@@ -62,10 +62,5 @@ class Gram2VecModule(ExplainableModule):
 
     def save_cache(self):
         import pickle
-        if self.dataset == "reddit":
-            with open("reddit_vector_map.pkl", "wb") as f:
-                pickle.dump(self.cache, f)
-        elif self.dataset == "fanfiction":
-            with open("fanfiction_vector_map.pkl", "wb") as f:
-                pickle.dump(self.cache, f)
-
+        with open(f"{self.dataset}_vector_map.pkl", "wb") as f:
+            pickle.dump(self.cache, f)
