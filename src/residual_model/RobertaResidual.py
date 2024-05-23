@@ -1,26 +1,3 @@
-"""
-Team: Peter Zeng, Jihu Mun
-File Description: This file describes the model and dataset classes for the 
-RoBERTa-based residual prediction model.
-
-NLP Topics criteria summary: We include this in every file for visibility.
-I. Classification: We get a baseline of the models' performance 
-without using residuals by task finetuning them on binary classification for authorship verification.
-This occurs in baseline.py
-
-II. Semantics: In order to train our residual prediction model, 
-we first get the embeddings of pairs of Reddit posts by tokenizing them, 
-passing them through the respective model, and taking the last hidden layer.
-This occurs in train_residual.py and finetune_baseline.py
-
-III. Language Modeling: We use autoencoder models for our sequence classification/regression tasks.
-This occurs in all of our files. 
-
-IV. Applications: We apply the residual prediction model for the task of authorship verification.
-This occurs in our training and testing files.
-
-System: All experiments were conducted on an A6000 GPU.
-"""
 import torch
 from transformers import AutoModel, AutoTokenizer
 from torch.utils.data import Dataset

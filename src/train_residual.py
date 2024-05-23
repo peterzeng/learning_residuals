@@ -1,36 +1,15 @@
-"""
-Team: Peter Zeng, Jihu Mun
-File Description: This file handles the processing of the data and 
-training and evaluation of the residual prediction model.
-
-NLP Topics criteria summary: We include this in every file for visibility.
-I. Classification: We get a baseline of the models' performance 
-without using residuals by task finetuning them on binary classification for authorship verification.
-This occurs in baseline.py
-
-II. Semantics: In order to train our residual prediction model, 
-we first get the embeddings of pairs of Reddit posts by tokenizing them, 
-passing them through the respective model, and taking the last hidden layer.
-This occurs in train_residual.py and finetune_baseline.py
-
-III. Language Modeling: We use autoencoder models for our sequence classification/regression tasks.
-This occurs in all of our files. 
-
-IV. Applications: We apply the residual prediction model for the task of authorship verification.
-This occurs in our training and testing files.
-
-System: All experiments were conducted on an A6000 GPU.
-"""
-
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 import pandas as pd
 from torch.optim import AdamW
 from tqdm.auto import tqdm
+from torch.nn.utils.rnn import pad_sequence
 from residual_model.LongformerResidual import LongformerResidualDataset, LongformerResidual
 from residual_model.RobertaResidual import RobertaResidualDataset, RobertaResidual
 from residual_model.LuarResidual import LuarResidualDataset, LuarResidual
+from sklearn.metrics import mean_absolute_error
+from scipy.stats import pearsonr
 from explainable_module import Gram2VecModule
 from torch.cuda.amp import autocast
 import logging
@@ -40,30 +19,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from peft import LoraConfig, get_peft_model
 import torch
+import os
+import csv
 
-# def print_cuda_memory_info():
-#     if torch.cuda.is_available():
-#         # Get the current selected device
-#         device = torch.cuda.current_device()
-#         # Get the device name
-#         device_name = torch.cuda.get_device_name(device)
-#         # Get total and available memory
-#         total_memory = torch.cuda.get_device_properties(device).total_memory
-#         available_memory = total_memory - torch.cuda.memory_allocated(device)
-#         # Convert bytes to gigabytes
-#         total_memory_gb = total_memory / (1024 ** 3)
-#         available_memory_gb = available_memory / (1024 ** 3)
 
-#         print(f"Device: {device_name}")
-#         print(f"Total Memory: {total_memory_gb:.2f} GB")
-#         print(f"Available Memory: {available_memory_gb:.2f} GB")
-#     else:
-#         print("CUDA is not available")
-
-# print_cuda_memory_info()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-g2v_vectorizer = Gram2VecModule()
+dataset = "fanfiction"
+g2v_vectorizer = Gram2VecModule(dataset=dataset)
 
 def process_posts(post_df):
     data = []
@@ -74,6 +37,20 @@ def process_posts(post_df):
                         "residual":residual})
     
     return data
+
+def custom_collate_fn(batch):
+    # Extract contexts and labels from the batch
+    contexts = [item['context'] for item in batch]
+    labels = torch.tensor([item['labels'] for item in batch])
+
+    # Pad the input_ids and attention_mask to the same length
+    input_ids = pad_sequence([context['input_ids'] for context in contexts], batch_first=True, padding_value=tokenizer.pad_token_id)
+    attention_mask = pad_sequence([context['attention_mask'] for context in contexts], batch_first=True, padding_value=0)
+
+    # Reconstruct the context dictionary with padded sequences
+    padded_contexts = {'input_ids': input_ids, 'attention_mask': attention_mask}
+
+    return {'context': padded_contexts, 'labels': labels}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on residual data.")
@@ -121,18 +98,29 @@ if __name__ == "__main__":
     # print("Checking number of params", model.enc_model.print_trainable_parameters())
     # logging.basicConfig(filename=f'{args.model_type}_{args.run_id}.txt', level=logging.INFO, format='%(asctime)s - %(message)s')
 
-    train_df = pd.read_csv("../data/train.csv")
-    dev_df = pd.read_csv("../data/dev.csv")
-    test_df = pd.read_csv("../data/test.csv")
+    # train_df = pd.read_csv("../data/train.csv")
+    # dev_df = pd.read_csv("../data/dev.csv")
+    # test_df = pd.read_csv("../data/test.csv")
 
-    train_df_sampled = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
-    dev_df_sampled = dev_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
-    test_df_sampled = test_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
+    train_df = pd.read_csv("../data/fanfiction/train.csv")
+    dev_df = pd.read_csv("../data/fanfiction/dev.csv")
+    test_df = pd.read_csv("../data/fanfiction/test.csv")
+    if args.percentage != 1:
+        train_df_sampled = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
+        dev_df_sampled = dev_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
+        test_df_sampled = test_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
 
-    train_data = process_posts(train_df_sampled)
-    dev_data = process_posts(dev_df_sampled)
-    test_data = process_posts(test_df_sampled)
-    
+        train_data = process_posts(train_df_sampled)
+        dev_data = process_posts(dev_df_sampled)
+        test_data = process_posts(test_df_sampled)
+    else:
+        train_data = process_posts(train_df)
+        dev_data = process_posts(dev_df)
+        test_data = process_posts(test_df)
+
+    if args.percentage == 1:
+        g2v_vectorizer.save_cache()
+
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     # sep_token_id = tokenizer.sep_token_id
     # print(sep_token_id)
@@ -151,12 +139,17 @@ if __name__ == "__main__":
         test_dataset = LuarResidualDataset(test_data, tokenizer)
     
     if args.model_type == 'longformer':
-        b_size = 8
+        b_size = 32
         print(f"Using batch size of {b_size}")
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
         dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
-    else:
-        b_size = 32
+    elif args.model_type == 'roberta':
+        b_size = 64
+        print(f"Using batch size of {b_size}")
+        train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
+        dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
+    elif args.model_type == 'luar':
+        b_size = 128
         print(f"Using batch size of {b_size}")
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
         dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
@@ -259,7 +252,10 @@ if __name__ == "__main__":
 
     # TESTING LOOP TO SEE HOW MUCH FINETUNED MODEL CORRECTS GRAM2VEC:
     gram2vec_cosims = []
-    vector_map = pd.read_pickle('vector_map.pkl')
+    if dataset == "fanfiction":
+        vector_map = pd.read_pickle('fanfiction_vector_map.pkl')
+    else:
+        vector_map = pd.read_pickle('reddit_vector_map.pkl')
 
     for i, row in test_df_sampled.iterrows():
         vector1 = vector_map[row['post_1_id']]
@@ -285,8 +281,27 @@ if __name__ == "__main__":
             predicted_labels.append(predictions)
 
     residual_cosims = [gram2vec_cosims[i] + predicted_labels[i] for i in range(len(predicted_labels))]
+    test_data_for_csv = []
+        # Collect data for CSV
+    for i in range(len(predicted_labels)):
+        test_data_for_csv.append([gram2vec_cosims[i], predicted_labels[i], residual_cosims[i]])
 
-    thresholds = [0.2, 0.3, 0.5, 0.7, 0.9, 0.95]
+    # Define the CSV file path
+    csv_file_path = f"test_results_{args.model_type}_{args.run_id}.csv"
+
+    # Define the header for the CSV file
+    csv_header = ["gram2vec cosim", "predicted residual", "corrected cosim"]
+
+    # Write the data to the CSV file
+    with open(csv_file_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(csv_header)
+        for row in test_data_for_csv:
+            writer.writerow(row)  # Add None for the threshold column
+
+    print(f"Test results saved to {csv_file_path}")
+    
+    thresholds = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     for threshold in thresholds:
         g2v_correct = 0
         long_correct = 0
@@ -335,6 +350,47 @@ if __name__ == "__main__":
         print(f"Different Author Recall: {recall_per_class[0]:.4f}, Same Author Recall: {recall_per_class[1]:.4f}")
         print(f"Different Author F1: {f1_per_class[0]:.4f}, Same Author F1: {f1_per_class[1]:.4f}")
         print()
+        stats_line = f"{threshold}, {g2v_correct}/{total}, {long_correct}/{total}, {g2v_correct/len(true_labels):.4f}, {long_correct/len(true_labels):.4f}, "
+        stats_line += f"{gram2vec_precision_per_class[0]:.4f}, {gram2vec_precision_per_class[1]:.4f}, {gram2vec_recall_per_class[0]:.4f}, {gram2vec_recall_per_class[1]:.4f}, {gram2vec_f1_per_class[0]:.4f}, {gram2vec_f1_per_class[1]:.4f}, "
+        stats_line += f"{precision_per_class[0]:.4f}, {precision_per_class[1]:.4f}, {recall_per_class[0]:.4f}, {recall_per_class[1]:.4f}, {f1_per_class[0]:.4f}, {f1_per_class[1]:.4f}"
+        print(stats_line)
+
+        # Define the CSV file path
+        csv_file_path = f"results_{args.model_type}_{args.run_id}.csv"
+
+        # Define the header for the CSV file
+        csv_header = [
+            "threshold", "g2v_correct/total", "long_correct/total", "g2v_accuracy", "long_accuracy",
+            "gram2vec_diff_author_precision", "gram2vec_same_author_precision",
+            "gram2vec_diff_author_recall", "gram2vec_same_author_recall",
+            "gram2vec_diff_author_f1", "gram2vec_same_author_f1",
+            "residual_diff_author_precision", "residual_same_author_precision",
+            "residual_diff_author_recall", "residual_same_author_recall",
+            "residual_diff_author_f1", "residual_same_author_f1"
+        ]
+
+        # Check if the CSV file already exists
+        file_exists = os.path.isfile(csv_file_path)
+
+        # Open the CSV file in append mode
+        with open(csv_file_path, mode='a', newline='') as file:
+            writer = csv.writer(file)
+
+            # Write the header only if the file does not exist
+            if not file_exists:
+                writer.writerow(csv_header)
+
+            # Write the stats line to the CSV file
+            writer.writerow([
+                threshold, f"{g2v_correct}/{total}", f"{long_correct}/{total}",
+                f"{g2v_correct/len(true_labels):.4f}", f"{long_correct/len(true_labels):.4f}",
+                f"{gram2vec_precision_per_class[0]:.4f}", f"{gram2vec_precision_per_class[1]:.4f}",
+                f"{gram2vec_recall_per_class[0]:.4f}", f"{gram2vec_recall_per_class[1]:.4f}",
+                f"{gram2vec_f1_per_class[0]:.4f}", f"{gram2vec_f1_per_class[1]:.4f}",
+                f"{precision_per_class[0]:.4f}", f"{precision_per_class[1]:.4f}",
+                f"{recall_per_class[0]:.4f}", f"{recall_per_class[1]:.4f}",
+                f"{f1_per_class[0]:.4f}", f"{f1_per_class[1]:.4f}"
+            ])
         # Plotting the residuals
     plt.figure(figsize=(10, 6))
     plt.hist(predicted_labels, bins=50, color='skyblue', edgecolor='black')
@@ -344,4 +400,5 @@ if __name__ == "__main__":
     plt.grid(axis='y', alpha=0.75)
     plt.show()
     plt.savefig(f"predicted_labels_{args.model_type}_{args.run_id}.png")
+
 
