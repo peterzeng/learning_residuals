@@ -13,20 +13,12 @@ class Gram2VecModule(ExplainableModule):
     def __init__(self, dataset) -> None:
         super().__init__()
         self.dataset = dataset
-        if self.dataset == "reddit":
-            if not os.path.exists("reddit_vector_map.pkl"):
-                self.cache = {}
-            else:
-                import pickle
-                with open("reddit_vector_map.pkl", "rb") as f:
-                    self.cache = pickle.load(f)
-        elif self.dataset == "fanfiction":
-            if not os.path.exists("fanfiction_vector_map.pkl"):
-                self.cache = {}
-            else:
-                import pickle
-                with open("fanfiction_vector_map.pkl", "rb") as f:
-                    self.cache = pickle.load(f)
+        if not os.path.exists(f"{dataset}_vector_map.pkl"):
+            self.cache = {}
+        else:
+            import pickle
+            with open(f"{dataset}_vector_map.pkl", "rb") as f:
+                self.cache = pickle.load(f)
 
         self.vectorizer_configs = {
             "pos_unigrams":1,
@@ -40,7 +32,7 @@ class Gram2VecModule(ExplainableModule):
             "sentences":1
         }
 
-    def cache_features(self, u_id, vector): # this is for TA2 eval
+    def cache_features(self, u_id, vector): 
         self.cache[u_id] = vector
     
     def get_vector(self, doc, uid):
