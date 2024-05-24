@@ -1,3 +1,8 @@
+'''
+    This code trains a model to predict the residual 
+    between ground truth and predicted cosine similarities from interpretable system.
+    It outputs 
+'''
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
@@ -22,13 +27,10 @@ import torch
 import os
 import csv
 
-
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-dataset = "fanfiction"
-g2v_vectorizer = Gram2VecModule(dataset=dataset)
 
-def process_posts(post_df):
+def process_posts(post_df, g2v_vectorizer):
     data = []
     for i, row in tqdm(post_df.iterrows(), total=post_df.shape[0], desc="Processing Posts"):
         residual = row['same'] - g2v_vectorizer.get_vector_and_score(row['post_1'], row['post_2'], row['post_1_id'], row['post_2_id'])
@@ -38,23 +40,10 @@ def process_posts(post_df):
     
     return data
 
-def custom_collate_fn(batch):
-    # Extract contexts and labels from the batch
-    contexts = [item['context'] for item in batch]
-    labels = torch.tensor([item['labels'] for item in batch])
-
-    # Pad the input_ids and attention_mask to the same length
-    input_ids = pad_sequence([context['input_ids'] for context in contexts], batch_first=True, padding_value=tokenizer.pad_token_id)
-    attention_mask = pad_sequence([context['attention_mask'] for context in contexts], batch_first=True, padding_value=0)
-
-    # Reconstruct the context dictionary with padded sequences
-    padded_contexts = {'input_ids': input_ids, 'attention_mask': attention_mask}
-
-    return {'context': padded_contexts, 'labels': labels}
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on residual data.")
     parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "luar"], help="Type of model to use for training.")
+    parser.add_argument("-d", "--dataset", type=str, default="reddit", choices=["fanfiction", "reddit", "amazon"], help="Dataset to use for training.")
     parser.add_argument("-r", "--run_id", type=str, default="0", help="Run ID for the experiment.")
     parser.add_argument("-p", "--percentage", type=float, default=0.2, help="Percentage of data to sample for training, validation, and testing.")
     parser.add_argument('--use_lora', type=bool, default = False,
@@ -68,6 +57,8 @@ if __name__ == "__main__":
     parser.add_argument('--LORA_TARGET_MODULES', nargs='+', default=["query","value",], 
                     help='List of LORA target modules')
     args = parser.parse_args()
+
+    g2v_vectorizer = Gram2VecModule(dataset=args.dataset)
 
     if args.model_type == "longformer":
         model = LongformerResidual()
@@ -92,33 +83,28 @@ if __name__ == "__main__":
         )
         model.enc_model = get_peft_model(model.enc_model, config)
         print(model.enc_model.print_trainable_parameters())
-        # print("Checking number of params", model.enc_model.print_trainable_parameters())
 
     model.to(device)
-    # print("Checking number of params", model.enc_model.print_trainable_parameters())
-    # logging.basicConfig(filename=f'{args.model_type}_{args.run_id}.txt', level=logging.INFO, format='%(asctime)s - %(message)s')
 
-    # train_df = pd.read_csv("../data/train.csv")
-    # dev_df = pd.read_csv("../data/dev.csv")
-    # test_df = pd.read_csv("../data/test.csv")
+    train_df = pd.read_csv(f"../data/{args.dataset}/train.csv")
+    dev_df = pd.read_csv(f"../data/{args.dataset}/dev.csv")
+    test_df = pd.read_csv(f"../data/{args.dataset}/test.csv")
 
-    train_df = pd.read_csv("../data/fanfiction/train.csv")
-    dev_df = pd.read_csv("../data/fanfiction/dev.csv")
-    test_df = pd.read_csv("../data/fanfiction/test.csv")
     if args.percentage != 1:
         train_df_sampled = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
         dev_df_sampled = dev_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
         test_df_sampled = test_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
 
-        train_data = process_posts(train_df_sampled)
-        dev_data = process_posts(dev_df_sampled)
-        test_data = process_posts(test_df_sampled)
+        train_data = process_posts(train_df_sampled, g2v_vectorizer)
+        dev_data = process_posts(dev_df_sampled, g2v_vectorizer)
+        test_data = process_posts(test_df_sampled, g2v_vectorizer)
     else:
-        train_data = process_posts(train_df)
-        dev_data = process_posts(dev_df)
-        test_data = process_posts(test_df)
+        train_data = process_posts(train_df, g2v_vectorizer)
+        dev_data = process_posts(dev_df, g2v_vectorizer)
+        test_data = process_posts(test_df, g2v_vectorizer)
+        test_df_sampled = test_df
 
-    if args.percentage == 1:
+    if args.percentage == 1:  
         g2v_vectorizer.save_cache()
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -252,10 +238,7 @@ if __name__ == "__main__":
 
     # TESTING LOOP TO SEE HOW MUCH FINETUNED MODEL CORRECTS GRAM2VEC:
     gram2vec_cosims = []
-    if dataset == "fanfiction":
-        vector_map = pd.read_pickle('fanfiction_vector_map.pkl')
-    else:
-        vector_map = pd.read_pickle('reddit_vector_map.pkl')
+    vector_map = pd.read_pickle(f'{args.dataset}_vector_map.pkl')
 
     for i, row in test_df_sampled.iterrows():
         vector1 = vector_map[row['post_1_id']]
@@ -281,13 +264,15 @@ if __name__ == "__main__":
             predicted_labels.append(predictions)
 
     residual_cosims = [gram2vec_cosims[i] + predicted_labels[i] for i in range(len(predicted_labels))]
+    
+    ### ANALYSIS CODE ###
     test_data_for_csv = []
-        # Collect data for CSV
+    # Collect data for CSV
     for i in range(len(predicted_labels)):
         test_data_for_csv.append([gram2vec_cosims[i], predicted_labels[i], residual_cosims[i]])
 
     # Define the CSV file path
-    csv_file_path = f"test_results_{args.model_type}_{args.run_id}.csv"
+    csv_file_path = f"results/analysis_{args.model_type}_{args.run_id}.csv"
 
     # Define the header for the CSV file
     csv_header = ["gram2vec cosim", "predicted residual", "corrected cosim"]
@@ -299,8 +284,10 @@ if __name__ == "__main__":
         for row in test_data_for_csv:
             writer.writerow(row)  # Add None for the threshold column
 
-    print(f"Test results saved to {csv_file_path}")
-    
+    print(f"Test results for analysis saved to {csv_file_path}")
+    ### END ANALYSIS CODE ###
+
+    ### EVALAUTION CODE ###
     thresholds = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     for threshold in thresholds:
         g2v_correct = 0
@@ -356,7 +343,7 @@ if __name__ == "__main__":
         print(stats_line)
 
         # Define the CSV file path
-        csv_file_path = f"results_{args.model_type}_{args.run_id}.csv"
+        csv_file_path = f"results/results_{args.model_type}_{args.run_id}.csv"
 
         # Define the header for the CSV file
         csv_header = [
@@ -391,7 +378,9 @@ if __name__ == "__main__":
                 f"{recall_per_class[0]:.4f}", f"{recall_per_class[1]:.4f}",
                 f"{f1_per_class[0]:.4f}", f"{f1_per_class[1]:.4f}"
             ])
-        # Plotting the residuals
+    ### END EVALAUTION CODE ###
+
+    # Plotting the residuals
     plt.figure(figsize=(10, 6))
     plt.hist(predicted_labels, bins=50, color='skyblue', edgecolor='black')
     plt.title('predicted residuals in test')
