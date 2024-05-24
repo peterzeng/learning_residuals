@@ -11,17 +11,17 @@ post_to_id = {}
 post_id = 0
 
 
-def get_post_id(doc):
+def get_post_id(doc, prefix):
     global post_id
     if doc in post_to_id:
         return post_to_id[doc]
 
     post_to_id[doc] = post_id
     post_id += 1
-    return post_to_id[doc]
+    return prefix + str(post_to_id[doc])
 
 
-def generate_pairs(data_path, out_path, num_pairs):
+def generate_pairs(data_path, out_path, num_pairs, prefix):
     data_list = []
     same_pairs = []
     diff_pairs = []
@@ -45,7 +45,7 @@ def generate_pairs(data_path, out_path, num_pairs):
 
         same_pairs.append({
             'post_1': docs[i], 'post_2': docs[j],
-            'post_1_id': get_post_id(docs[i]), 'post_2_id': get_post_id(docs[j]),
+            'post_1_id': get_post_id(docs[i], prefix), 'post_2_id': get_post_id(docs[j], prefix),
             'author_1': author_id, 'author_2': author_id,
             'fandom_1': fandoms[i], 'fandom_2': fandoms[j], 'same': True
         })
@@ -60,7 +60,7 @@ def generate_pairs(data_path, out_path, num_pairs):
 
         diff_pairs.append({
             'post_1': docs1[i], 'post_2': docs2[j],
-            'post_1_id': get_post_id(docs1[i]), 'post_2_id': get_post_id(docs2[j]),
+            'post_1_id': get_post_id(docs1[i], prefix), 'post_2_id': get_post_id(docs2[j], prefix),
             'author_1': str(author1), 'author_2': str(author2),
             'fandom_1': fandoms1[i], 'fandom_2': fandoms2[j], 'same': False
         })
@@ -70,5 +70,5 @@ def generate_pairs(data_path, out_path, num_pairs):
 
 
 if __name__ == '__main__':
-    data_path, out_path, num_pairs = sys.argv[1:]
-    generate_pairs(data_path, out_path, int(num_pairs))
+    data_path, out_path, num_pairs, prefix = sys.argv[1:]
+    generate_pairs(data_path, out_path, int(num_pairs), prefix)
