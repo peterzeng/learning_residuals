@@ -1,26 +1,3 @@
-"""
-Team: Peter Zeng, Jihu Mun
-File Description: This file tests the residual prediction models.
-
-NLP Topics criteria summary: We include this in every file for visibility.
-I. Classification: We get a baseline of the models' performance 
-without using residuals by task finetuning them on binary classification for authorship verification.
-This occurs in baseline.py
-
-II. Semantics: In order to train our residual prediction model, 
-we first get the embeddings of pairs of Reddit posts by tokenizing them, 
-passing them through the respective model, and taking the last hidden layer.
-This occurs in train_residual.py and finetune_baseline.py
-
-III. Language Modeling: We use autoencoder models for our sequence classification/regression tasks.
-This occurs in all of our files. 
-
-IV. Applications: We apply the residual prediction model for the task of authorship verification.
-This occurs in our training and testing files.
-
-System: All experiments were conducted on an A6000 GPU.
-"""
-
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from transformers import LongformerModel, LongformerTokenizer
@@ -59,8 +36,7 @@ print(device)
 
 logging.set_verbosity(logging.ERROR)
 
-def process_posts(post_df):
-    g2v_vectorizer = Gram2VecModule()
+def process_posts(post_df, g2v_vectorizer):
     data = []
     for i, row in tqdm(post_df.iterrows(), total=post_df.shape[0], desc="Processing Posts"):
         residual = row['same'] - g2v_vectorizer.get_vector_and_score(row['post_1'], row['post_2'], row['post_1_id'], row['post_2_id'])
@@ -72,6 +48,7 @@ def process_posts(post_df):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on residual data.")
     parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "luar"], help="Type of model to use for training.")
+    parser.add_argument("-d", "--dataset", type=str, default="reddit", choices=["fanfiction", "reddit"], help="Dataset to use for training.")
     parser.add_argument("-r", "--run_id", type=str, default="0", help="Run ID for the experiment.")
     parser.add_argument("-p", "--percentage", type=float, default=0.2, help="Percentage of data to sample for training, validation, and testing.")
     parser.add_argument('--use_lora', type=bool, default = False,
@@ -85,6 +62,8 @@ if __name__ == "__main__":
     parser.add_argument('--LORA_TARGET_MODULES', nargs='+', default=["query","value",], 
                     help='List of LORA target modules')
     args = parser.parse_args()
+
+    g2v_vectorizer = Gram2VecModule(dataset=args.dataset)
 
     vector_map = pd.read_pickle('vector_map.pkl')
     test_df = pd.read_csv("../data/test.csv")
