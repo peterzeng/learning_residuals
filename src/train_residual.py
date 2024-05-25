@@ -5,7 +5,7 @@
 '''
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import pandas as pd
 from torch.optim import AdamW
 from tqdm.auto import tqdm
@@ -22,7 +22,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 import torch
 import os
 import csv
@@ -56,6 +56,36 @@ if __name__ == "__main__":
                     help='Lora dropout')
     parser.add_argument('--LORA_TARGET_MODULES', nargs='+', default=["query","value",], 
                     help='List of LORA target modules')
+
+    #use qlora
+    parser.add_argument('--use_qlora', type=bool, default = False,
+                    help='Use QLoRA.')
+    #BitsAndBytesConfig
+    parser.add_argument('--use_qlora', type=bool, default = False,
+                    help='Use QLoRA.')
+    parser.add_argument('--load_in_8bit', type=bool, default = True,
+                    help='load in 8 bit')
+    parser.add_argument('--load_in_4bit', type=bool, default = False,
+                    help='load in 4 bit.')
+    parser.add_argument('--llm_int8_threshold', type=int, default = 6.0,
+                    help='llm_int8_threshold.')
+    parser.add_argument('--llm_int8_has_fp16_weight', type=bool, default = False,
+                    help='llm_int8_has_fp16_weight.')
+    parser.add_argument('--bnb_4bit_use_double_quant', type=bool, default = True,
+                    help='bnb_4bit_use_double_quant.')
+    parser.add_argument('--bnb_4bit_quant_type', type=str, default = "nf4",
+                    help='bnb_4bit_quant_type.')
+    
+    #setting device map for qlora settings, might not be required -> need further testing
+    device_map = "auto"
+    # if we are in a distributed setting, we need to set the device map and max memory(iffy) per device
+    if os.environ.get('LOCAL_RANK') is not None:
+        local_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        device_map = {'': local_rank}
+
+    print(device_map)
+
+
     args = parser.parse_args()
 
     g2v_vectorizer = Gram2VecModule(dataset=args.dataset)
@@ -71,6 +101,29 @@ if __name__ == "__main__":
         model_name = 'rrivera1849/LUAR-MUD'
     else:
         raise ValueError("Unsupported model type specified.")
+    
+    if args.use_qlora == True:
+        print("Using Qlora")
+        qlora_config = BitsAndBytesConfig(
+                # load_in_4bit=True,
+                load_in_8bit=args.load_in_8bit,
+                llm_int8_threshold=args.llm_int8_threshold,
+                llm_int8_has_fp16_weight=args.llm_int8_has_fp16_weight,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+            )
+        model.enc_model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            load_in_8bit=args.load_in_8bit,
+            device_map=device_map,
+            # max_memory=max_memory,
+            quantization_config=qlora_config,
+            torch_dtype=torch.bfloat16,
+        )
+        model.enc_model = prepare_model_for_kbit_training(model.enc_model, use_gradient_checkpointing=True)
+        #quantization done, if quantization -> set use_lora to true as well
+        args.use_lora = True
 
     if args.use_lora == True:
         print("using LORA")
@@ -83,6 +136,8 @@ if __name__ == "__main__":
         )
         model.enc_model = get_peft_model(model.enc_model, config)
         print(model.enc_model.print_trainable_parameters())
+    
+    
 
     model.to(device)
 
