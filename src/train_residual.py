@@ -9,12 +9,7 @@ from transformers import AutoTokenizer
 import pandas as pd
 from torch.optim import AdamW
 from tqdm.auto import tqdm
-from torch.nn.utils.rnn import pad_sequence
-from residual_model.LongformerResidual import LongformerResidualDataset, LongformerResidual
-from residual_model.RobertaResidual import RobertaResidualDataset, RobertaResidual
-from residual_model.LuarResidual import LuarResidualDataset, LuarResidual
-from sklearn.metrics import mean_absolute_error
-from scipy.stats import pearsonr
+from ResidualModel import ResidualDataset, ResidualModel
 from explainable_module import Gram2VecModule
 from torch.cuda.amp import autocast
 import logging
@@ -42,11 +37,12 @@ def process_posts(post_df, g2v_vectorizer):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on residual data.")
-    parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "luar"], help="Type of model to use for training.")
-    parser.add_argument("-d", "--dataset", type=str, default="reddit", choices=["fanfiction", "reddit", "amazon"], help="Dataset to use for training.")
+    parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "luar", "roberta-large", "style"], help="Type of model to use for training.")
+    parser.add_argument("-d", "--dataset", type=str, default="reddit", choices=["fanfiction", "reddit", "amazon", "imbalanced_reddit", "imbalanced_fanfiction", "imbalanced_amazon"], help="Dataset to use for training.")
+    parser.add_argument("-i", "--imbalanced", type=bool, default=False, help="Use imbalanced dataset.")
     parser.add_argument("-r", "--run_id", type=str, default="0", help="Run ID for the experiment.")
-    parser.add_argument("-p", "--percentage", type=float, default=0.2, help="Percentage of data to sample for training, validation, and testing.")
-    parser.add_argument('--use_lora', type=bool, default = False,
+    parser.add_argument("-p", "--percentage", type=float, default=1, help="Percentage of data to sample for training, validation, and testing.")
+    parser.add_argument("-l", '--use_lora', type=bool, default = True,
                     help='Lora rank.')
     parser.add_argument('--LORA_R', type=int, default = 8,
                     help='Lora rank.')
@@ -60,17 +56,7 @@ if __name__ == "__main__":
 
     g2v_vectorizer = Gram2VecModule(dataset=args.dataset)
 
-    if args.model_type == "longformer":
-        model = LongformerResidual()
-        model_name = 'allenai/longformer-base-4096'
-    elif args.model_type == "roberta":
-        model = RobertaResidual()
-        model_name = 'roberta-base'
-    elif args.model_type == "luar":
-        model = LuarResidual()
-        model_name = 'rrivera1849/LUAR-MUD'
-    else:
-        raise ValueError("Unsupported model type specified.")
+    model = ResidualModel(model_type=args.model_type)
 
     if args.use_lora == True:
         print("using LORA")
@@ -86,9 +72,14 @@ if __name__ == "__main__":
 
     model.to(device)
 
-    train_df = pd.read_csv(f"../data/{args.dataset}/train.csv")
-    dev_df = pd.read_csv(f"../data/{args.dataset}/dev.csv")
-    test_df = pd.read_csv(f"../data/{args.dataset}/test.csv")
+    if args.imbalanced == True:
+        train_df = pd.read_csv(f"../data/imbalanced/{args.dataset}/train.csv")
+        dev_df = pd.read_csv(f"../data/imbalanced/{args.dataset}/dev.csv")
+        test_df = pd.read_csv(f"../data/imbalanced/{args.dataset}/test.csv")
+    else:
+        train_df = pd.read_csv(f"../data/{args.dataset}/train.csv")
+        dev_df = pd.read_csv(f"../data/{args.dataset}/dev.csv")
+        test_df = pd.read_csv(f"../data/{args.dataset}/test.csv")
 
     if args.percentage != 1:
         train_df_sampled = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
@@ -107,42 +98,25 @@ if __name__ == "__main__":
     if args.percentage == 1:  
         g2v_vectorizer.save_cache()
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # sep_token_id = tokenizer.sep_token_id
-    # print(sep_token_id)
-    # exit()
-    if args.model_type == "longformer":
-        train_dataset = LongformerResidualDataset(train_data, tokenizer)
-        dev_dataset = LongformerResidualDataset(dev_data, tokenizer)
-        test_dataset = LongformerResidualDataset(test_data, tokenizer)
-    elif args.model_type == 'roberta':
-        train_dataset = RobertaResidualDataset(train_data, tokenizer)
-        dev_dataset = RobertaResidualDataset(dev_data, tokenizer)
-        test_dataset = RobertaResidualDataset(test_data, tokenizer)
-    elif args.model_type == 'luar':
-        train_dataset = LuarResidualDataset(train_data, tokenizer)
-        dev_dataset = LuarResidualDataset(dev_data, tokenizer)
-        test_dataset = LuarResidualDataset(test_data, tokenizer)
+    train_dataset = ResidualDataset(train_data, model_type = args.model_type)
+    dev_dataset = ResidualDataset(dev_data, model_type = args.model_type)
+    test_dataset = ResidualDataset(test_data, model_type = args.model_type)
     
     if args.model_type == 'longformer':
+        b_size = 16
+    elif args.model_type == 'roberta-large':
         b_size = 32
-        print(f"Using batch size of {b_size}")
-        train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
-        dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
-    elif args.model_type == 'roberta':
+    elif args.model_type == 'roberta' or args.model_type == 'style':
         b_size = 64
-        print(f"Using batch size of {b_size}")
-        train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
-        dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
     elif args.model_type == 'luar':
         b_size = 128
-        print(f"Using batch size of {b_size}")
-        train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
-        dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
 
+    print(f"Using batch size of {b_size}")
+    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
+    dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
     test_dataloader = DataLoader(test_dataset, batch_size=1)
 
-    optimizer = AdamW(model.parameters(), lr=5e-5, weight_decay=.0001)
+    optimizer = AdamW(model.parameters(), lr=1e-5, weight_decay=.0001)
 
     # Training loop
     best_val_loss = float('inf')
@@ -150,7 +124,7 @@ if __name__ == "__main__":
     early_stopping_patience = 3
 
     # Define the total number of epochs
-    num_epochs = 10
+    num_epochs = 5
     # Include in paper about accumulation steps
     accumulation_steps = 1 # Adjust this based on your GPU capacity and desired batch size
     print(f"number of accuulation steps: {accumulation_steps}")
@@ -169,7 +143,6 @@ if __name__ == "__main__":
                 outputs = model(context, labels=labels)
                 loss = outputs["loss"] / accumulation_steps  # Normalize loss to account for accumulation
             
-            # breakpoint()
             # print(outputs['logits'])
             loss.backward()
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_dataloader):
@@ -179,9 +152,6 @@ if __name__ == "__main__":
             total_loss += loss.item() * accumulation_steps  # Undo the normalization for logging
             train_dataloader.set_postfix(loss=(total_loss / (i + 1)), refresh=False)
             # optimizer.step()
-
-            # total_loss += loss.item()
-            # train_dataloader.set_postfix(loss=loss.item()/len(batch), refresh=False)
 
         avg_loss = total_loss/len(train_dataloader)
         print(f"Epoch: {epoch + 1}, Loss: {avg_loss}")
@@ -218,13 +188,13 @@ if __name__ == "__main__":
         if avg_val_loss < best_val_loss:
             print("saving model")
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), f"../model/{args.model_type}_{args.run_id}_model.pt")
+            torch.save(model.state_dict(), f"../model/{args.model_type}_{args.dataset}_{args.run_id}_residual.pt")
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': avg_val_loss,
-                }, f"../model/{args.model_type}_{args.run_id}_checkpoint.pt")
+                }, f"../model/{args.model_type}_{args.dataset}_{args.run_id}_residual_checkpoint.pt")
             early_stopping_counter = 0  # reset counter after improvement
         else:
             early_stopping_counter += 1
@@ -264,18 +234,19 @@ if __name__ == "__main__":
             predicted_labels.append(predictions)
 
     residual_cosims = [gram2vec_cosims[i] + predicted_labels[i] for i in range(len(predicted_labels))]
+    same_labels = list(test_df_sampled['same'])
     
     ### ANALYSIS CODE ###
     test_data_for_csv = []
     # Collect data for CSV
     for i in range(len(predicted_labels)):
-        test_data_for_csv.append([gram2vec_cosims[i], predicted_labels[i], residual_cosims[i]])
+        test_data_for_csv.append([gram2vec_cosims[i], predicted_labels[i], residual_cosims[i], same_labels[i]])
 
     # Define the CSV file path
-    csv_file_path = f"results/analysis_{args.model_type}_{args.run_id}.csv"
+    csv_file_path = f"results/analysis_{args.model_type}_{args.run_id}_{args.dataset}.csv"
 
     # Define the header for the CSV file
-    csv_header = ["gram2vec cosim", "predicted residual", "corrected cosim"]
+    csv_header = ["gram2vec cosim", "predicted residual", "corrected cosim", 'same']
 
     # Write the data to the CSV file
     with open(csv_file_path, mode='w', newline='') as file:
@@ -337,17 +308,13 @@ if __name__ == "__main__":
         print(f"Different Author Recall: {recall_per_class[0]:.4f}, Same Author Recall: {recall_per_class[1]:.4f}")
         print(f"Different Author F1: {f1_per_class[0]:.4f}, Same Author F1: {f1_per_class[1]:.4f}")
         print()
-        stats_line = f"{threshold}, {g2v_correct}/{total}, {long_correct}/{total}, {g2v_correct/len(true_labels):.4f}, {long_correct/len(true_labels):.4f}, "
-        stats_line += f"{gram2vec_precision_per_class[0]:.4f}, {gram2vec_precision_per_class[1]:.4f}, {gram2vec_recall_per_class[0]:.4f}, {gram2vec_recall_per_class[1]:.4f}, {gram2vec_f1_per_class[0]:.4f}, {gram2vec_f1_per_class[1]:.4f}, "
-        stats_line += f"{precision_per_class[0]:.4f}, {precision_per_class[1]:.4f}, {recall_per_class[0]:.4f}, {recall_per_class[1]:.4f}, {f1_per_class[0]:.4f}, {f1_per_class[1]:.4f}"
-        print(stats_line)
 
         # Define the CSV file path
-        csv_file_path = f"results/results_{args.model_type}_{args.run_id}.csv"
+        csv_file_path = f"results/results_{args.model_type}_{args.run_id}_{args.dataset}.csv"
 
         # Define the header for the CSV file
         csv_header = [
-            "threshold", "g2v_correct/total", "long_correct/total", "g2v_accuracy", "long_accuracy",
+            "threshold", "g2v_correct/total", "residual_correct/total", "g2v_accuracy", "residual_accuracy",
             "gram2vec_diff_author_precision", "gram2vec_same_author_precision",
             "gram2vec_diff_author_recall", "gram2vec_same_author_recall",
             "gram2vec_diff_author_f1", "gram2vec_same_author_f1",
@@ -388,4 +355,4 @@ if __name__ == "__main__":
     plt.ylabel('Frequency')
     plt.grid(axis='y', alpha=0.75)
     plt.show()
-    plt.savefig(f"predicted_labels_{args.model_type}_{args.run_id}.png")
+    plt.savefig(f"results/predicted_labels_{args.model_type}_{args.run_id}_{args.dataset}.png")

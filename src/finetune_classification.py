@@ -1,26 +1,3 @@
-"""
-Team: Peter Zeng, Jihu Mun
-File Description: This file takes the binary classification finetuned models, 
-and task finetunes them on the residual prediction task.
-
-NLP Topics criteria summary: We include this in every file for visibility.
-I. Classification: We get a baseline of the models' performance 
-without using residuals by task finetuning them on binary classification for authorship verification.
-This occurs in baseline.py
-
-II. Semantics: In order to train our residual prediction model, 
-we first get the embeddings of pairs of Reddit posts by tokenizing them, 
-passing them through the respective model, and taking the last hidden layer.
-This occurs in train_residual.py and finetune_baseline.py
-
-III. Language Modeling: We use autoencoder models for our sequence classification/regression tasks.
-This occurs in all of our files. 
-
-IV. Applications: We apply the residual prediction model for the task of authorship verification.
-This occurs in our training and testing files.
-
-System: All experiments were conducted on an A6000 GPU.
-"""
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModel
@@ -50,13 +27,21 @@ class AuthorClassificationModel(torch.nn.Module):
         elif model_name == "roberta":
             self.model = AutoModel.from_pretrained('roberta-base')
             self.tokenizer = AutoTokenizer.from_pretrained('roberta-base')
+        elif model_name == "roberta-large":
+            self.model = AutoModel.from_pretrained('roberta-large')
+            self.tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+        elif model_name == "style":
+            self.model = AutoModel.from_pretrained("AnnaWegmann/Style-Embedding")
+            self.tokenizer = AutoTokenizer.from_pretrained("AnnaWegmann/Style-Embedding")
         else:
             raise ValueError("Unsupported model type specified.")
         
         if model_name == "luar":
             self.classifier = torch.nn.Linear(512, 2)
-        elif model_name == "longformer" or model_name == "roberta":
+        elif model_name == "longformer" or model_name == "roberta" or model_name == "style":
             self.classifier = torch.nn.Linear(768, 2)
+        elif model_name == "roberta-large":
+            self.classifier = torch.nn.Linear(1024, 2)
         else:
             raise ValueError("Unsupported model type specified.")
         
@@ -95,14 +80,15 @@ class DocumentPairDataset(Dataset):
         self.model_name = model_name
         if model_name == "longformer":
             self.max_length = 1024
+        elif model_name == "style":
+            self.max_length = 512
     
-        
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         item = self.data[idx]
-        if self.model_name == "longformer":
+        if self.model_name == "longformer" or self.model_name == "style":
             context = self.tokenizer(item['text1'], item['text2'], return_tensors="pt", padding='max_length', truncation=True, max_length=self.max_length)
         else:
             context = self.tokenizer(item['text1'], item['text2'], return_tensors="pt", padding='max_length', truncation=True)
@@ -116,10 +102,11 @@ class DocumentPairDataset(Dataset):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on residual data.")
-    parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "luar"], help="Type of model to use for training.")
+    parser.add_argument("-m", "--model_type", type=str, default="longformer", choices=["longformer", "roberta", "roberta-large", "luar", "style"], help="Type of model to use for training.")
+    parser.add_argument("-d", "--dataset", type=str, default="reddit", choices=['reddit', 'amazon', 'fanfiction'], help="Dataset to use for training.")
     parser.add_argument("-r", "--run_id", type=str, default="0", help="Run ID for the experiment.")
-    parser.add_argument("-p", "--percentage", type=float, default=0.2, help="Percentage of data to sample for training, validation, and testing.")
-    parser.add_argument('--use_lora', type=bool, default = False,
+    parser.add_argument("-p", "--percentage", type=float, default=1, help="Percentage of data to sample for training, validation, and testing.")
+    parser.add_argument("-l", "--use_lora", type=bool, default = True,
                     help='Lora rank.')
     parser.add_argument('--LORA_R', type=int, default = 8,
                     help='Lora rank.')
@@ -135,37 +122,41 @@ if __name__ == "__main__":
         model_name = 'allenai/longformer-base-4096'
     elif args.model_type == "roberta":
         model_name = 'roberta-base'
+    elif args.model_type == "roberta-large":
+        model_name = 'roberta-large'
     elif args.model_type == "luar":
         model_name = 'rrivera1849/LUAR-MUD'
+    elif args.model_type == "style":
+        model_name = 'AnnaWegmann/Style-Embedding'
     else:
         raise ValueError("Unsupported model type specified.")
 
     model = AuthorClassificationModel(args.model_type)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    train_df = pd.read_csv("../data/train.csv")
-    dev_df = pd.read_csv("../data/dev.csv")
-    test_df = pd.read_csv("../data/test.csv")
+    train_df = pd.read_csv(f"../data/{args.dataset}/train.csv")
+    dev_df = pd.read_csv(f"../data/{args.dataset}/dev.csv")
+    test_df = pd.read_csv(f"../data/{args.dataset}/test.csv")
 
-    train_df_sampled = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
-    dev_df_sampled = dev_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
-    test_df_sampled = test_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
+    if args.percentage < 1:
+        train_df = train_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
+        dev_df = dev_df.sample(frac=args.percentage, random_state=30)  # random_state ensures reproducibility
 
-    train_data = process_posts(train_df_sampled)
-    dev_data = process_posts(dev_df_sampled)
-    test_data = process_posts(test_df_sampled)
+    train_data = process_posts(train_df)
+    dev_data = process_posts(dev_df)
+    test_data = process_posts(test_df)
     
     train_dataset = DocumentPairDataset(train_data, tokenizer, args.model_type)
     dev_dataset = DocumentPairDataset(dev_data, tokenizer, args.model_type)
     test_dataset = DocumentPairDataset(test_data, tokenizer, args.model_type)
 
-    if args.model_type == 'longformer':
-        b_size = 8
+    if args.model_type == 'longformer' or args.model_type == "roberta-large":
+        b_size = 32
         print(f"Using batch size of {b_size}")
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
         dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
-    else:
-        b_size = 32
+    elif args.model_type == "roberta" or args.model_type == "luar":
+        b_size = 64
         print(f"Using batch size of {b_size}")
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=b_size)
         dev_dataloader = DataLoader(dev_dataset, batch_size=b_size)
@@ -193,7 +184,10 @@ if __name__ == "__main__":
     early_stopping_counter = 0
     early_stopping_patience = 3
     
-    accumulation_steps = 1 # Adjust this based on your GPU capacity and desired batch size
+    if args.model_type == "longformer":
+        accumulation_steps = 2 # Adjust this based on your GPU capacity and desired batch size
+    else:
+        accumulation_steps = 1 # Adjust this based on your GPU capacity and desired batch size
     print(f"number of accuulation steps: {accumulation_steps}")
 
     for epoch in range(num_epochs):
@@ -245,7 +239,7 @@ if __name__ == "__main__":
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             # Save the model
-            torch.save(model.state_dict(), f'../model/{args.model_type}_{args.run_id}_baseline.pt')
+            torch.save(model.state_dict(), f'../model/{args.model_type}_{args.dataset}_{args.run_id}_classification.pt')
             print(f"New best validation loss: {best_val_loss}. Model saved!")
         else:
             early_stopping_counter += 1
@@ -296,3 +290,21 @@ if __name__ == "__main__":
         class_mask = (all_labels == label)
         class_accuracy = accuracy_score(np.array(all_labels)[class_mask], np.array(all_predictions)[class_mask])
         print(f"Class {label} Accuracy: {class_accuracy:.4f}")
+    
+    import pandas as pd
+
+    # Create a DataFrame to store the metrics
+    metrics_data = {
+        "Class": [f"Class {i}" for i in range(len(precision))],
+        "Precision": precision,
+        "Recall": recall,
+        "F1 Score": f1,
+        "Accuracy": [accuracy_score(np.array(all_labels)[all_labels == i], np.array(all_predictions)[all_labels == i]) for i in np.unique(all_labels)]
+    }
+
+    # Convert dictionary to DataFrame
+    metrics_df = pd.DataFrame(metrics_data)
+
+    # Save the DataFrame to a CSV file
+    metrics_df.to_csv(f"results/classification_baseline/{args.model_type}_{args.dataset}_{args.run_id}_class_metrics.csv", index=False)
+    print("Metrics saved to class_metrics.csv")
